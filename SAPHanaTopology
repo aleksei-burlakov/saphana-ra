@@ -28,6 +28,11 @@
 #######################################################################
 #
 # Initialization:
+
+MY_LOG_FILE=SAPHanaTopology.log
+MY_OCF_LOG_FILE=SAPHanaTopology-ocf.log
+echo "BEGIN: " $(date) $# $@ >> $MY_LOG_FILE
+
 SAPHanaVersion="0.152.22"
 timeB=$(date '+%s')
 
@@ -56,6 +61,9 @@ SH=/bin/sh
 # params:   LOG_MESSAGE
 # globals:  SUPER_LOG_PATH, SAPHanaFilter
 function super_ocf_log() {
+    if [ "$1" == "debug" ]; then
+	echo $(date) $@ >> $MY_OCF_LOG_FILE
+    fi
     local level="$1"
     local message="$2"
     local skip=1
@@ -104,8 +112,8 @@ function sht_usage() {
     local rc=0
     methods=$(sht_methods)
     methods=$(echo $methods | tr ' ' '|')
-  cat <<-!
-	usage: $0 ($methods)
+    cat <<-EOF
+    usage: $0 ($methods)
 
     $0 manages a SAP HANA Instance as an HA resource.
 
@@ -117,8 +125,8 @@ function sht_usage() {
     The 'validate-all' operation reports whether the parameters are valid
     The 'methods'      operation reports on the methods $0 supports
 
-	!
-	return $rc
+EOF
+    return $rc
 }
 
 #
@@ -217,6 +225,7 @@ function get_hana_attribute()
         reboot | forever )
             echo "$dstr: SAPHanaTopology: crm_attribute -N ${attr_node} -G -n \"$attr_name\" -l $attr_store -q" >> $log_attr_file
             crm_attribute -N ${attr_node} -G -n "$attr_name" -l $attr_store -q -d "$attr_default" 2>>$log_attr_file; rc=$?
+	    printf "                get_hana_attribute: crm_attribute -N ${attr_node} -G -n \"$attr_name\" -l $attr_store -q -d \"$attr_default\"\n" >> $MY_LOG_FILE
             ;;
         props )
             echo "$dstr: SAPHanaTopology: crm_attribute -G -n \"$attr_name\" -t crm_config -q" >> $log_attr_file
@@ -244,6 +253,7 @@ function set_hana_attribute()
     local attr_old=""
     local dstr
     dstr=$(date)
+    echo "            set_hana_attribute: node=$attr_node, value=$attr_value, name=$attr_name, store=$attr_store" >> $MY_LOG_FILE
     attr_old=$(get_hana_attribute $attr_node $attr_name $attr_store $attr_default); get_rc=$?
     if [ "$attr_old" != "$attr_value" ]; then
         super_ocf_log debug "DBG: SET attribute $attr_name for node ${attr_node} to ${attr_value} former ($attr_old) get_rc=$get_rc "
@@ -274,7 +284,7 @@ function set_hana_attribute()
 function sht_methods() {
   super_ocf_log info "FLOW $FUNCNAME ($*)"
   local rc=0
-  cat <<-!
+  cat <<-EOF
     start
     stop
     status
@@ -285,8 +295,8 @@ function sht_methods() {
     meta-data
     usage
     admin-setup
-	!
-	return $rc
+EOF
+    return $rc
 }
 
 #
@@ -446,6 +456,7 @@ function HANA_CALL()
 #
 
 function sht_init() {
+    echo "    sht_init: " $(date) >> $MY_LOG_FILE
     super_ocf_log info "FLOW $FUNCNAME ($*)"
     local myInstanceName=""
     local rc=$OCF_SUCCESS
@@ -633,6 +644,7 @@ function sht_init() {
 #           srmode(r)
 #
 function check_for_primary() {
+    echo "            check_for_primary: srmode=$srmode" >> $MY_LOG_FILE
     super_ocf_log info "FLOW $FUNCNAME ($*)"
     local rc=0
     super_ocf_log debug "DBG: check_for_primary: srmode=$srmode"
@@ -652,6 +664,7 @@ function check_for_primary() {
           rc=$HANA_STATE_DEFECT
    esac;
    super_ocf_log info "FLOW $FUNCNAME rc=$rc"
+   echo "            check_for_primary, exit: rc=$rc" >> $MY_LOG_FILE
    return $rc
 }
 
@@ -757,6 +770,7 @@ function sht_stop() {
 # sht_monitor: Can the given SAP instance do anything useful?
 #
 function sht_monitor() {
+    echo "            sht_monitor: " $HA_RSCTMP >> $MY_LOG_FILE
     super_ocf_log info "FLOW $FUNCNAME ($*)"
     local rc=0
     # check for old status file
@@ -770,6 +784,7 @@ function sht_monitor() {
         rc=$OCF_NOT_RUNNING
     fi
     super_ocf_log info "FLOW $FUNCNAME rc=$rc"
+    echo "            sht_monitor, exit: rc =" $rc " " $(date) >> $MY_LOG_FILE
     return $rc
 }
 
@@ -858,6 +873,7 @@ function sht_stop_clone() {
 # sht_monitor_clone
 #
 function sht_monitor_clone() {
+    echo "        sht_monitor_clone: " $(date) >> $MY_LOG_FILE
     super_ocf_log info "FLOW $FUNCNAME ($*)"
     #
 	local rc=$OCF_ERR_GENERIC
@@ -886,19 +902,23 @@ function sht_monitor_clone() {
     super_ocf_log debug "DBG2: HANA InstanceNr $InstanceNr"
 	check_for_primary; primary_status=$?
     if [ $primary_status -eq $HANA_STATE_PRIMARY ]; then
+	echo "        sht_monitor_clone: it is a primary node" >> $MY_LOG_FILE
         hanaPrim="P"
         super_ocf_log debug "DBG2: HANA IS PRIMARY"
         sht_monitor; rc=$?
     else
         if [ $primary_status -eq $HANA_STATE_SECONDARY  ]; then
+	    echo "        sht_monitor_clone: it is a secondary node" >> $MY_LOG_FILE
             hanaPrim="S"
             super_ocf_log debug "DBG2: HANA IS SECONDARY"
             sht_monitor; rc=$?
         elif [ $primary_status -eq $HANA_STATE_STANDALONE  ]; then
+	    echo "        sht_monitor_clone: it is a standalone node" >> $MY_LOG_FILE
             hanaPrim="N"
             super_ocf_log debug "DBG2: HANA IS STANDALONE"
             sht_monitor; rc=$?
         else
+	    echo "        sht_monitor_clone: WARNING! WTF it is?" >> $MY_LOG_FILE
             # bsc#1027098 Do not mark HANA instance as failed, if "only" the HANA state could not be detected
             hanaPrim=$(get_hana_attribute ${NODENAME} ${ATTR_NAME_HANA_ROLES[@]} | awk -F: '{ print $2}')
             if [ "$hanaPrim" = "" ]; then
@@ -930,6 +950,7 @@ function sht_monitor_clone() {
     # since rev 120 we need to use the --sapcontrol, because SAP changed the tool output
     #
     if version "$hdbver" ">=" "1.00.100"; then
+	echo "        sht_monitor_clone: hdbver=$hdbver" >> $MY_LOG_FILE
         hanaANSWER=$(HANA_CALL --timeout 60 --cmd "landscapeHostConfiguration.py --sapcontrol=1" 2>/dev/null); hanalrc="$?"
         # TODO: PRIO9: Do we need to check the lines: 'SAPCONTROL-OK: <begin>' and 'SAPCONTROL-OK: <end>'?
         hanarole=$(echo "$hanaANSWER" | tr -d ' ' | \
@@ -938,7 +959,9 @@ function sht_monitor_clone() {
                      $1 == "indexServerConfigRole"   {f3=$2}
                      $1 == "indexServerActualRole"   {f4=$2}
                      END { printf "%s:%s:%s:%s\n", f1, f2, f3,f4 }')
+	printf "        sht_monitor_clone:\n'''\nhanaANSWER=$hanaANSWER\n'''\n" >> $MY_LOG_FILE
     else
+	echo "        sht_monitor_clone: hdbver=$hdbver (OLD VERSION)" >> $MY_LOG_FILE
         #
         # old code for backward compatability
         #
@@ -950,15 +973,21 @@ function sht_monitor_clone() {
     #fi
     # FH TODO PRIO3: TRY TO GET RID OF "ATTR_NAME_HANA_REMOTEHOST"
     if [ -n "$hanaRemoteHost" ]; then
+	echo "        sht_monitor_clone: NODENAME=$NODENAME, hanaRemoteHost=$hanaRemoteHost, attrs=${ATTR_NAME_HANA_REMOTEHOST[@]}" >> $MY_LOG_FILE
         set_hana_attribute ${NODENAME} "$hanaRemoteHost" ${ATTR_NAME_HANA_REMOTEHOST[@]}
     fi
+    echo "        sht_monitor_clone: NODENAME=$NODENAME, hanalrc:hanaPrim:hanarole=$hanalrc:$hanaPrim:$hanarole, attrs=${ATTR_NAME_HANA_ROLES[@]}" >> $MY_LOG_FILE
     set_hana_attribute ${NODENAME} "$hanalrc:$hanaPrim:$hanarole" ${ATTR_NAME_HANA_ROLES[@]}
     if [ -n "$site" ]; then
+	echo "        sht_monitor_clone: NODENAME=$NODENAME, site=$site, attrs=${ATTR_NAME_HANA_SITE[@]}" >> $MY_LOG_FILE
         set_hana_attribute ${NODENAME} "$site" ${ATTR_NAME_HANA_SITE[@]}
     fi
     case "$hanaPrim" in
-        P ) ;;
+        P ) 
+	echo "        sht_monitor_clone: hanaPrim=$hanaPrim, (PRIMARY) nothing to do" >> $MY_LOG_FILE
+	;;
         S ) # only secondary may propargate its sync status
+	echo "        sht_monitor_clone: hanaPrim=$hanaPrim, (SECONDARY) do the shit" >> $MY_LOG_FILE
         case $(crm_attribute --type crm_config --name cluster-infrastructure -q) in
            *corosync* ) nodelist=$(crm_node -l | awk '{ print $2 }');;
            *openais* ) nodelist=$(crm_node -l | awk '/member/ {print $2}');;
@@ -966,6 +995,7 @@ function sht_monitor_clone() {
         esac
 
         for n in ${nodelist}; do
+	    echo "        sht_monitor_clone: n=$n, srmode=$srmode, attr=${ATTR_NAME_HANA_SRMODE[@]}" >> $MY_LOG_FILE
            set_hana_attribute ${n} "$srmode" ${ATTR_NAME_HANA_SRMODE[@]}
         done
         ;;
@@ -1062,10 +1092,12 @@ super_ocf_log info "RA ==== begin action $ACTION$CLACT ($SAPHanaVersion) ===="
 ra_rc=$OCF_ERR_UNIMPLEMENTED
 case "$ACTION" in
     start|stop|monitor) # Standard controling actions
+	echo "    case sht_$ACTION$CLACT: " $(date)>> $MY_LOG_FILE
         sht_$ACTION$CLACT
         ra_rc=$?
         ;;
     validate-all)
+	echo "    case sht_validate: " $(date)>> $MY_LOG_FILE
         sht_validate
         ra_rc=$?
         ;;
