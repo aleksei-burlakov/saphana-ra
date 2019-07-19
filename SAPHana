@@ -2156,7 +2156,7 @@ function saphana_monitor_primary()
             fi
             ;;
         2 | 3 | 4 ) # WARN, INFO or OK
-            if ocf_is_probe; then
+            if ocf_is_probe && [ 1 == 0 ]; then
                 rc=$OCF_SUCCESS
             else
                 LPTloc=$(date '+%s')
