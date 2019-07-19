@@ -1,0 +1,2 @@
+This program should normally only be invoked from inside an OCF resource agent.
+To set a promotion score from the command line, please specify resource with -r.
